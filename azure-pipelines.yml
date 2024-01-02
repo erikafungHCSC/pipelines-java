@@ -1,22 +1,56 @@
-# Maven
-# Build your Java project and run tests with Apache Maven.
-# Add steps that analyze code, save build artifacts, deploy, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/java
+## Is also triggered by repo policy on PR creation
+#trigger:
+#  branches:
+#    include:
+#      - main # E.g., trigger on main, before code is pushed to prod
 
+
+# Run tests on all branches
+# https://learn.microsoft.com/en-us/azure/devops/pipelines/repos/azure-repos-git?view=azure-devops&tabs=yaml#ci-triggers
 trigger:
-- main
+  branches:
+    include:
+    - '*'
 
-pool:
-  vmImage: ubuntu-latest
+pool: HC-CDO Self-Hosted
+
+strategy:
+  matrix:
+    Python310:
+      python.version: '3.10.4'
 
 steps:
-- task: Maven@3
-  inputs:
-    mavenPomFile: 'pom.xml'
-    mavenOptions: '-Xmx3072m'
-    javaHomeOption: 'JDKVersion'
-    jdkVersionOption: '1.8'
-    jdkArchitectureOption: 'x64'
-    publishJUnitResults: true
-    testResultsFiles: '**/surefire-reports/TEST-*.xml'
-    goals: 'package'
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '$(python.version)'
+    displayName: 'Use Python $(python.version)'
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+    displayName: 'Install dependencies'
+
+  - script: |
+      pip install pytest pytest-azurepipelines
+      python -m pytest
+    displayName: 'pytest'
+
+
+  # Note: the Code Coverage publish task MUST run before the Test Results publish: to get the build to fail
+  # (and therefore show up in the PR), we have to use the failTaskOnFailedTests: true bit -- but unfortunately
+  # it doesn't seem like there's any other way to run the Code Coverage *and* still fail overall. Occam's
+  # Razor solution: just run the Code Coverage first, and then let the Test Results fail the pipeline.
+  # 2023-12-20 note from KW: actually in practice I'm not sure the above logic covers 100% of cases. YMMV?
+  - task: PublishCodeCoverageResults@1
+    displayName: "Publish code coverage results"
+    inputs:
+      codeCoverageTool: 'JaCoCo'
+      summaryFileLocation: './azresources/web/functionapp/files/TEST-COVERAGE.xml'
+      pathToSources: '$(System.DefaultWorkingDirectory)'
+  - task: PublishTestResults@2
+    displayName: "Publish test results"
+    inputs:
+      testRunTitle: 'Pester test results'
+      testRunner: 'NUnit'
+      testResultsFiles: './azresources/web/functionapp/files/TEST-RESULTS.xml'
+      failTaskOnFailedTests: true # required to fail build when tests fail
